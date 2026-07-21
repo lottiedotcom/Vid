@@ -4,14 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Clipper</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { background-color: #111827; color: white; padding: 1rem; font-family: sans-serif; }
-    .container { background-color: #1f2937; padding: 1.5rem; border-radius: 0.75rem; max-width: 28rem; margin: 2rem auto; }
-    input, select, button { width: 100%; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 0.25rem; color: black; box-sizing: border-box; }
-    button { background-color: #2563eb; color: white; font-weight: bold; border: none; padding: 1rem; cursor: pointer; border-radius: 0.5rem; }
-    .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.25rem; }
+    .container { background-color: #1f2937; padding: 1.5rem; border-radius: 0.75rem; max-width: 28rem; margin: 2rem auto; box-sizing: border-box; }
+    input, select, button { width: 100%; margin-bottom: 1.5rem; padding: 0.75rem; border-radius: 0.5rem; color: black; box-sizing: border-box; border: 1px solid #4b5563; font-size: 1rem; }
+    input[type="file"] { color: white; }
+    button { background-color: #2563eb; color: white; font-weight: bold; border: none; cursor: pointer; }
+    button:hover { background-color: #1d4ed8; }
+    .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
   </style>
+  <!-- Load FFmpeg UMD bundle which avoids cross-origin worker errors -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
   <div class="container shadow-lg">
@@ -32,15 +35,14 @@
     
     <button id="process-btn">Process Video</button>
     
-    <div id="status" style="margin-top: 1rem; text-align: center; color: #9ca3af; font-family: monospace;"></div>
+    <div id="status" style="margin-top: 1rem; text-align: center; color: #9ca3af; font-family: monospace; font-size: 0.85rem;"></div>
     <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js';
-    import { fetchFile } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
+  <script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
 
-    const ffmpeg = new FFmpeg();
     const statusEl = document.getElementById('status');
     const outputEl = document.getElementById('output');
 
@@ -52,24 +54,21 @@
       const count = parseInt(document.getElementById('clip-count').value);
       const length = parseInt(document.getElementById('clip-length').value);
       
-      statusEl.innerText = "Loading video engine (this may take a minute)...";
+      statusEl.innerText = "Loading video engine...";
       outputEl.innerHTML = '';
 
-      if (!ffmpeg.loaded) {
-        try {
-          await ffmpeg.load({
-            coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js',
-            wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm'
-          });
-        } catch (e) {
-          statusEl.innerText = `Error: ${e.message || 'Could not load engine.'}`;
-          console.error(e);
-          return;
+      try {
+        if (!ffmpeg.isLoaded()) {
+          await ffmpeg.load();
         }
+      } catch (e) {
+        statusEl.innerText = "Error loading engine.";
+        console.error(e);
+        return;
       }
 
-      statusEl.innerText = "Reading video...";
-      await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+      statusEl.innerText = "Reading video into memory...";
+      ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
       const videoElement = document.createElement('video');
       videoElement.src = URL.createObjectURL(file);
@@ -90,15 +89,15 @@
         const startTime = Math.max(0, Math.random() * maxStartTime);
         const outputName = `clip_${i + 1}.mp4`;
         
-        await ffmpeg.exec([
+        await ffmpeg.run(
           '-i', 'input.mp4',
           '-ss', startTime.toString(),
           '-t', length.toString(),
           '-c', 'copy',
           outputName
-        ]);
+        );
 
-        const data = await ffmpeg.readFile(outputName);
+        const data = ffmpeg.FS('readFile', outputName);
         const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
         
         const link = document.createElement('a');
@@ -109,7 +108,7 @@
         outputEl.appendChild(link);
       }
 
-      statusEl.innerText = "Done! Download your clips above.";
+      statusEl.innerText = "Done! Download your clips below.";
     });
   </script>
 </body>
