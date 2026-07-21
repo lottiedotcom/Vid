@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Clipper</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white p-4">
+  <div class="max-w-md mx-auto mt-10 bg-gray-800 p-6 rounded-xl shadow-lg">
+    <h1 class="text-2xl font-bold mb-6 text-center">Video Clipper</h1>
+    
+    <label class="block mb-2 font-semibold">1. Upload Video:</label>
+    <input type="file" id="video-upload" accept="video/*" class="mb-6 block w-full text-sm">
+    
+    <label class="block mb-2 font-semibold">2. Number of Clips:</label>
+    <input type="number" id="clip-count" value="5" min="1" max="20" class="mb-6 w-full p-2 rounded bg-gray-700 border border-gray-600 text-white">
+    
+    <label class="block mb-2 font-semibold">3. Clip Length:</label>
+    <select id="clip-length" class="mb-6 w-full p-2 rounded bg-gray-700 border border-gray-600 text-white">
+      <option value="3">3 Seconds</option>
+      <option value="5">5 Seconds</option>
+      <option value="10">10 Seconds</option>
+    </select>
+    
+    <button id="process-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg">Process Video</button>
+    
+    <div id="status" class="mt-4 text-sm text-gray-400 text-center font-mono"></div>
+    <div id="output" class="mt-6 flex flex-col gap-3"></div>
+  </div>
+
+  <script type="module">
+    import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js';
+    import { fetchFile } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
+
+    const ffmpeg = new FFmpeg();
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+
+    document.getElementById('process-btn').addEventListener('click', async () => {
+      const fileInput = document.getElementById('video-upload');
+      if (!fileInput.files.length) return alert('Please upload a video first.');
+      
+      const file = fileInput.files[0];
+      const count = parseInt(document.getElementById('clip-count').value);
+      const length = parseInt(document.getElementById('clip-length').value);
+      
+      statusEl.innerText = "Loading video engine (this may take a minute)...";
+      outputEl.innerHTML = '';
+
+      if (!ffmpeg.loaded) {
+        await ffmpeg.load({
+          coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/esm/ffmpeg-core.js',
+          wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/esm/ffmpeg-core.wasm'
+        });
+      }
+
+      statusEl.innerText = "Reading video...";
+      await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+
+      const videoElement = document.createElement('video');
+      videoElement.src = URL.createObjectURL(file);
+      await new Promise(resolve => {
+        videoElement.onloadedmetadata = resolve;
+      });
+      const duration = videoElement.duration;
+      
+      if (duration < length) return alert('Video is too short for that clip length!');
+
+      for (let i = 0; i < count; i++) {
+        statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
+        
+        const maxStartTime = duration - length;
+        const startTime = Math.max(0, Math.random() * maxStartTime);
+        const outputName = `clip_${i + 1}.mp4`;
+        
+        await ffmpeg.exec([
+          '-i', 'input.mp4',
+          '-ss', startTime.toString(),
+          '-t', length.toString(),
+          '-c', 'copy',
+          outputName
+        ]);
+
+        const data = await ffmpeg.readFile(outputName);
+        const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = outputName;
+        link.innerText = `⬇️ Download Clip ${i + 1}`;
+        link.className = 'bg-green-600 hover:bg-green-500 text-white py-2 px-4 rounded text-center block font-bold transition';
+        outputEl.appendChild(link);
+      }
+
+      statusEl.innerText = "Done! Download your clips above.";
+    });
+  </script>
+</body>
+</html>
+
