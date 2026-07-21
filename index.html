@@ -5,22 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Clipper</title>
   
-  <!-- PWA Manifest Link -->
   <link rel="manifest" href="./manifest.json">
   <meta name="theme-color" content="#111827">
 
   <style>
     body { background-color: #111827; color: white; padding: 1rem; font-family: sans-serif; }
     .container { background-color: #1f2937; padding: 1.5rem; border-radius: 0.75rem; max-width: 28rem; margin: 2rem auto; box-sizing: border-box; }
-    input, select, button { width: 100%; margin-bottom: 1.5rem; padding: 0.75rem; border-radius: 0.5rem; color: black; box-sizing: border-box; border: 1px solid #4b5563; font-size: 1rem; }
-    input[type="file"], input[type="number"] { color: white; background-color: #374151; }
-    button { background-color: #2563eb; color: white; font-weight: bold; border: none; cursor: pointer; }
+    input, select, button { width: 100%; margin-bottom: 1.2rem; padding: 0.75rem; border-radius: 0.5rem; color: black; box-sizing: border-box; border: 1px solid #4b5563; font-size: 1rem; }
+    input[type="file"], input[type="number"], select { color: white; background-color: #374151; }
+    button { background-color: #2563eb; color: white; font-weight: bold; border: none; cursor: pointer; padding: 1rem; }
     button:hover { background-color: #1d4ed8; }
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
     #status { white-space: pre-wrap; word-break: break-all; }
+    
+    .gif-panel { background-color: #111827; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1.5rem; border: 1px dashed #4b5563; }
+    .checkbox-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+    .checkbox-wrap input { width: auto; margin: 0; transform: scale(1.5); }
+    .hidden { display: none; }
   </style>
   
-  <!-- Using the stable version that avoids cross-origin worker blocks -->
   <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
 </head>
 <body>
@@ -33,9 +36,47 @@
     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">2. Number of Clips:</label>
     <input type="number" id="clip-count" value="3" min="1" max="20">
     
-    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">3. Custom Clip Length (Seconds):</label>
+    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">3. Clip Length (Seconds):</label>
     <input type="number" id="clip-length" value="2" min="1" max="300">
     
+    <div class="gif-panel">
+      <div class="checkbox-wrap">
+        <input type="checkbox" id="enable-gif">
+        <label for="enable-gif" style="font-weight: bold; color: #60a5fa;">Convert to GIFs + Watermark</label>
+      </div>
+      
+      <div id="gif-settings" class="hidden">
+        <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">Watermark Image (Transparent PNG):</label>
+        <input type="file" id="wm-upload" accept="image/png, image/jpeg">
+        
+        <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">Watermark Position:</label>
+        <select id="wm-pos">
+          <option value="BR">Bottom Right</option>
+          <option value="BL">Bottom Left</option>
+          <option value="TR">Top Right</option>
+          <option value="TL">Top Left</option>
+        </select>
+
+        <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">GIF Width (Lower = Faster):</label>
+        <input type="number" id="gif-width" value="320" step="10">
+
+        <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">Speed:</label>
+        <select id="gif-speed">
+          <option value="1">Normal (1x)</option>
+          <option value="1.5">Fast (1.5x)</option>
+          <option value="2">Super Fast (2x)</option>
+          <option value="0.5">Slow Motion (0.5x)</option>
+        </select>
+        
+        <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem;">Playback Loop Mode:</label>
+        <select id="gif-mode">
+          <option value="forward">Normal (Forward)</option>
+          <option value="boomerang">Boomerang (Forward to Back)</option>
+          <option value="backward">Reverse Only (Backward)</option>
+        </select>
+      </div>
+    </div>
+
     <button id="process-btn">Process Video</button>
     
     <div id="status" style="margin-top: 1rem; text-align: center; color: #9ca3af; font-family: monospace; font-size: 0.85rem;"></div>
@@ -43,12 +84,14 @@
   </div>
 
   <script>
-    // Register the PWA Service Worker
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').then(() => {
-        console.log('Service Worker Registered');
-      });
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
     }
+
+    // Toggle GIF settings menu
+    document.getElementById('enable-gif').addEventListener('change', (e) => {
+      document.getElementById('gif-settings').classList.toggle('hidden', !e.target.checked);
+    });
 
     const { createFFmpeg, fetchFile } = FFmpeg;
     const ffmpeg = createFFmpeg({ 
@@ -62,16 +105,16 @@
     document.getElementById('process-btn').addEventListener('click', async () => {
       try {
         const fileInput = document.getElementById('video-upload');
-        if (!fileInput.files.length) {
-          alert('Please upload a video first.');
-          return;
-        }
+        if (!fileInput.files.length) return alert('Please upload a video first.');
         
         const file = fileInput.files[0];
         const count = parseInt(document.getElementById('clip-count').value);
         const length = parseFloat(document.getElementById('clip-length').value);
         
-        statusEl.innerText = "Analyzing video duration...";
+        const makeGif = document.getElementById('enable-gif').checked;
+        const wmFile = document.getElementById('wm-upload').files[0];
+        
+        statusEl.innerText = "Analyzing video...";
         outputEl.innerHTML = '';
 
         const videoElement = document.createElement('video');
@@ -81,52 +124,101 @@
           videoElement.onerror = () => reject(new Error("Failed to load metadata."));
         });
 
-        const duration = videoElement.duration;
-        if (duration < length) {
-          throw new Error(`Video is too short (${duration.toFixed(1)}s) for a ${length}s clip!`);
+        if (videoElement.duration < length) {
+          throw new Error(`Video is too short for a ${length}s clip!`);
         }
 
-        statusEl.innerText = "Loading local engine...";
-        if (!ffmpeg.isLoaded()) {
-          await ffmpeg.load();
-        }
+        statusEl.innerText = "Loading engine...";
+        if (!ffmpeg.isLoaded()) await ffmpeg.load();
 
-        statusEl.innerText = "Reading video into memory...";
+        statusEl.innerText = "Loading video into memory...";
         ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
+        if (makeGif && wmFile) {
+          ffmpeg.FS('writeFile', 'wm.png', await fetchFile(wmFile));
+        }
+
         for (let i = 0; i < count; i++) {
-          statusEl.innerText = `Fast-cutting clip ${i + 1} of ${count}...`;
+          statusEl.innerText = `Processing clip ${i + 1} of ${count}...`;
           
-          const maxStartTime = Math.max(0, duration - length);
+          const maxStartTime = Math.max(0, videoElement.duration - length);
           const startTime = Math.random() * maxStartTime;
-          const outputName = `clip_${i + 1}.mp4`;
           
-          // -c copy makes the cut instant (removes lag). 
-          // -map_metadata 0 keeps the original orientation flags intact.
+          // Step 1: Instantly cut the exact clip first to save RAM
           await ffmpeg.run(
             '-i', 'input.mp4',
             '-ss', startTime.toString(),
             '-t', length.toString(),
             '-c', 'copy',
             '-map_metadata', '0',
-            outputName
+            'temp.mp4'
           );
 
+          let outputName = `clip_${i + 1}.mp4`;
+          let mimeType = 'video/mp4';
+
+          if (makeGif) {
+            outputName = `clip_${i + 1}.gif`;
+            mimeType = 'image/gif';
+            
+            const gWidth = document.getElementById('gif-width').value;
+            const gSpeed = parseFloat(document.getElementById('gif-speed').value);
+            const gMode = document.getElementById('gif-mode').value;
+            const wmPos = document.getElementById('wm-pos').value;
+            
+            // Speed math: if speed is 2x, setpts is 0.5
+            const pts = 1 / gSpeed;
+            let filterStr = `scale=${gWidth}:-1,setpts=${pts}*PTS`;
+            let filterGraph = [];
+            
+            // Add looping direction
+            if (gMode === 'backward') {
+              filterStr += `,reverse`;
+              filterGraph.push(`[0:v]${filterStr}[vid]`);
+            } else if (gMode === 'boomerang') {
+              filterGraph.push(`[0:v]${filterStr},split[fwd][tmp];[tmp]reverse[rev];[fwd][rev]concat=n=2:v=1:a=0[vid]`);
+            } else {
+              filterGraph.push(`[0:v]${filterStr}[vid]`);
+            }
+
+            // Add watermark overlay if uploaded
+            let mapOut = "[vid]";
+            if (wmFile) {
+              let posMath = "W-w-10:H-h-10"; // Bottom Right
+              if (wmPos === 'TL') posMath = "10:10";
+              if (wmPos === 'TR') posMath = "W-w-10:10";
+              if (wmPos === 'BL') posMath = "10:H-h-10";
+              
+              filterGraph.push(`[vid][1:v]overlay=${posMath}[out]`);
+              mapOut = "[out]";
+            }
+            
+            let gifCmd = ['-i', 'temp.mp4'];
+            if (wmFile) gifCmd.push('-i', 'wm.png');
+            gifCmd.push('-filter_complex', filterGraph.join(';'), '-map', mapOut, '-f', 'gif', outputName);
+            
+            statusEl.innerText = `Drawing GIF ${i + 1}... (This takes a moment)`;
+            await ffmpeg.run(...gifCmd);
+          } else {
+            // Rename temp to output if not making a GIF
+            ffmpeg.FS('rename', 'temp.mp4', outputName);
+          }
+
           const data = ffmpeg.FS('readFile', outputName);
-          const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+          const url = URL.createObjectURL(new Blob([data.buffer], { type: mimeType }));
           
           const link = document.createElement('a');
           link.href = url;
           link.download = outputName;
-          link.innerText = `⬇️ Download Clip ${i + 1} (${length}s)`;
+          link.innerText = `⬇️ Download ${makeGif ? 'GIF' : 'Video'} ${i + 1}`;
           link.className = 'download-btn';
           outputEl.appendChild(link);
           
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, 200));
         }
 
         statusEl.style.color = "#9ca3af";
-        statusEl.innerText = "Done! Download your clips below.";
+        statusEl.innerText = "Done! Download your files below.";
         
       } catch (err) {
         console.error(err);
