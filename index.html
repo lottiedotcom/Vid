@@ -12,8 +12,8 @@
     button { background-color: #2563eb; color: white; font-weight: bold; border: none; cursor: pointer; }
     button:hover { background-color: #1d4ed8; }
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
+    #status { white-space: pre-wrap; word-break: break-all; }
   </style>
-  <!-- Load FFmpeg UMD bundle which avoids cross-origin worker errors -->
   <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
@@ -47,68 +47,75 @@
     const outputEl = document.getElementById('output');
 
     document.getElementById('process-btn').addEventListener('click', async () => {
-      const fileInput = document.getElementById('video-upload');
-      if (!fileInput.files.length) return alert('Please upload a video first.');
-      
-      const file = fileInput.files[0];
-      const count = parseInt(document.getElementById('clip-count').value);
-      const length = parseInt(document.getElementById('clip-length').value);
-      
-      statusEl.innerText = "Loading video engine...";
-      outputEl.innerHTML = '';
-
       try {
+        const fileInput = document.getElementById('video-upload');
+        if (!fileInput.files.length) {
+          alert('Please upload a video first.');
+          return;
+        }
+        
+        const file = fileInput.files[0];
+        const count = parseInt(document.getElementById('clip-count').value);
+        const length = parseInt(document.getElementById('clip-length').value);
+        
+        statusEl.innerText = "Checking video duration...";
+        outputEl.innerHTML = '';
+
+        // Read video duration first before loading the heavy engine
+        const videoElement = document.createElement('video');
+        videoElement.src = URL.createObjectURL(file);
+        await new Promise((resolve, reject) => {
+          videoElement.onloadedmetadata = resolve;
+          videoElement.onerror = () => reject(new Error("Failed to load video metadata. File might be corrupted or unsupported format."));
+        });
+        
+        const duration = videoElement.duration;
+        
+        if (duration < length) {
+          throw new Error(`Video is too short (${duration.toFixed(1)}s) for a ${length}s clip! Choose a shorter clip length or a longer video.`);
+        }
+
+        statusEl.innerText = "Loading video engine...";
         if (!ffmpeg.isLoaded()) {
           await ffmpeg.load();
         }
-      } catch (e) {
-        statusEl.innerText = "Error loading engine.";
-        console.error(e);
-        return;
-      }
 
-      statusEl.innerText = "Reading video into memory...";
-      ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
+        statusEl.innerText = "Reading video into memory...";
+        ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
-      const videoElement = document.createElement('video');
-      videoElement.src = URL.createObjectURL(file);
-      await new Promise(resolve => {
-        videoElement.onloadedmetadata = resolve;
-      });
-      const duration = videoElement.duration;
-      
-      if (duration < length) {
-        statusEl.innerText = "Error: Video too short.";
-        return alert('Video is too short for that clip length!');
-      }
+        for (let i = 0; i < count; i++) {
+          statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
+          
+          const maxStartTime = duration - length;
+          const startTime = Math.max(0, Math.random() * maxStartTime);
+          const outputName = `clip_${i + 1}.mp4`;
+          
+          await ffmpeg.run(
+            '-i', 'input.mp4',
+            '-ss', startTime.toString(),
+            '-t', length.toString(),
+            '-c', 'copy',
+            outputName
+          );
 
-      for (let i = 0; i < count; i++) {
-        statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
+          const data = ffmpeg.FS('readFile', outputName);
+          const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+          
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = outputName;
+          link.innerText = `⬇️ Download Clip ${i + 1}`;
+          link.className = 'download-btn';
+          outputEl.appendChild(link);
+        }
+
+        statusEl.innerText = "Done! Download your clips below.";
         
-        const maxStartTime = duration - length;
-        const startTime = Math.max(0, Math.random() * maxStartTime);
-        const outputName = `clip_${i + 1}.mp4`;
-        
-        await ffmpeg.run(
-          '-i', 'input.mp4',
-          '-ss', startTime.toString(),
-          '-t', length.toString(),
-          '-c', 'copy',
-          outputName
-        );
-
-        const data = ffmpeg.FS('readFile', outputName);
-        const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-        
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = outputName;
-        link.innerText = `⬇️ Download Clip ${i + 1}`;
-        link.className = 'download-btn';
-        outputEl.appendChild(link);
+      } catch (err) {
+        console.error(err);
+        statusEl.style.color = "#ef4444"; // Red error text
+        statusEl.innerText = "ERROR: " + err.message;
       }
-
-      statusEl.innerText = "Done! Download your clips below.";
     });
   </script>
 </body>
