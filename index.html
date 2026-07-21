@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Clipper</title>
+  
+  <!-- PWA Manifest Link -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#111827">
+
   <style>
     body { background-color: #111827; color: white; padding: 1rem; font-family: sans-serif; }
     .container { background-color: #1f2937; padding: 1.5rem; border-radius: 0.75rem; max-width: 28rem; margin: 2rem auto; box-sizing: border-box; }
@@ -14,18 +19,13 @@
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
     #status { white-space: pre-wrap; word-break: break-all; }
   </style>
-  <script type="importmap">
-    {
-      "imports": {
-        "@ffmpeg/ffmpeg": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js",
-        "@ffmpeg/util": "https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js"
-      }
-    }
-  </script>
+  
+  <!-- Using the stable version that avoids cross-origin worker blocks -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
 </head>
 <body>
   <div class="container shadow-lg">
-    <h1 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1.5rem; text-align: center;">Video Clipper</h1>
+    <h1 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1.5rem; text-align: center;">Video Clipper (PWA)</h1>
     
     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">1. Upload Video:</label>
     <input type="file" id="video-upload" accept="video/*">
@@ -42,13 +42,22 @@
     <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from '@ffmpeg/ffmpeg';
-    import { fetchFile, toBlobURL } from '@ffmpeg/util';
+  <script>
+    // Register the PWA Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(() => {
+        console.log('Service Worker Registered');
+      });
+    }
+
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ 
+      corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js',
+      log: true 
+    });
 
     const statusEl = document.getElementById('status');
     const outputEl = document.getElementById('output');
-    let ffmpeg = null;
 
     document.getElementById('process-btn').addEventListener('click', async () => {
       try {
@@ -69,7 +78,7 @@
         videoElement.src = URL.createObjectURL(file);
         await new Promise((resolve, reject) => {
           videoElement.onloadedmetadata = resolve;
-          videoElement.onerror = () => reject(new Error("Failed to load video file metadata."));
+          videoElement.onerror = () => reject(new Error("Failed to load metadata."));
         });
 
         const duration = videoElement.duration;
@@ -77,44 +86,33 @@
           throw new Error(`Video is too short (${duration.toFixed(1)}s) for a ${length}s clip!`);
         }
 
-        statusEl.innerText = "Loading processing engine (this takes a moment)...";
-        if (!ffmpeg) {
-          ffmpeg = new FFmpeg();
-          
-          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-          const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm';
-          
-          // This specific block is what bypasses the security errors completely
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            workerURL: await toBlobURL(`${ffmpegURL}/worker.js`, 'text/javascript')
-          });
+        statusEl.innerText = "Loading local engine...";
+        if (!ffmpeg.isLoaded()) {
+          await ffmpeg.load();
         }
 
         statusEl.innerText = "Reading video into memory...";
-        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+        ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
         for (let i = 0; i < count; i++) {
-          statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
+          statusEl.innerText = `Fast-cutting clip ${i + 1} of ${count}...`;
           
           const maxStartTime = Math.max(0, duration - length);
           const startTime = Math.random() * maxStartTime;
           const outputName = `clip_${i + 1}.mp4`;
           
-          // Natively cuts the file and strips bad rotation metadata
-          await ffmpeg.exec([
+          // -c copy makes the cut instant (removes lag). 
+          // -map_metadata 0 keeps the original orientation flags intact.
+          await ffmpeg.run(
             '-i', 'input.mp4',
             '-ss', startTime.toString(),
             '-t', length.toString(),
-            '-c:v', 'libx264',
-            '-c:a', 'aac',
-            '-pix_fmt', 'yuv420p',
-            '-metadata:s:v:0', 'rotate=0',
+            '-c', 'copy',
+            '-map_metadata', '0',
             outputName
-          ]);
+          );
 
-          const data = await ffmpeg.readFile(outputName);
+          const data = ffmpeg.FS('readFile', outputName);
           const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
           
           const link = document.createElement('a');
