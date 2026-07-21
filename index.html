@@ -14,14 +14,8 @@
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
     #status { white-space: pre-wrap; word-break: break-all; }
   </style>
-  <script type="importmap">
-    {
-      "imports": {
-        "@ffmpeg/ffmpeg": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js",
-        "@ffmpeg/util": "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js"
-      }
-    }
-  </script>
+  <!-- Load the classic standalone FFmpeg bundle that doesn't use web workers -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
   <div class="container shadow-lg">
@@ -31,10 +25,10 @@
     <input type="file" id="video-upload" accept="video/*">
     
     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">2. Number of Clips:</label>
-    <input type="number" id="clip-count" value="5" min="1" max="20">
+    <input type="number" id="clip-count" value="3" min="1" max="20">
     
     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">3. Custom Clip Length (Seconds):</label>
-    <input type="number" id="clip-length" value="3" min="1" max="300">
+    <input type="number" id="clip-length" value="2" min="1" max="300">
     
     <button id="process-btn">Process Video</button>
     
@@ -42,13 +36,12 @@
     <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from '@ffmpeg/ffmpeg';
-    import { fetchFile, toBlobURL } from '@ffmpeg/util';
+  <script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
 
     const statusEl = document.getElementById('status');
     const outputEl = document.getElementById('output');
-    let ffmpeg = null;
 
     document.getElementById('process-btn').addEventListener('click', async () => {
       try {
@@ -77,18 +70,13 @@
           throw new Error(`Video is too short (${duration.toFixed(1)}s) for a ${length}s clip!`);
         }
 
-        statusEl.innerText = "Loading processing engine...";
-        if (!ffmpeg) {
-          ffmpeg = new FFmpeg();
-          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          });
+        statusEl.innerText = "Loading engine (this takes a moment)...";
+        if (!ffmpeg.isLoaded()) {
+          await ffmpeg.load();
         }
 
         statusEl.innerText = "Reading video into memory...";
-        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+        ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
         for (let i = 0; i < count; i++) {
           statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
@@ -97,9 +85,7 @@
           const startTime = Math.random() * maxStartTime;
           const outputName = `clip_${i + 1}.mp4`;
           
-          // Using precise cutting parameters (-ss after -i) to prevent lag/freezing, 
-          // and auto-rotating/stripping bad orientation flags so it stays upright.
-          await ffmpeg.exec([
+          await ffmpeg.run(
             '-i', 'input.mp4',
             '-ss', startTime.toString(),
             '-t', length.toString(),
@@ -108,9 +94,9 @@
             '-pix_fmt', 'yuv420p',
             '-metadata:s:v:0', 'rotate=0',
             outputName
-          ]);
+          );
 
-          const data = await ffmpeg.readFile(outputName);
+          const data = ffmpeg.FS('readFile', outputName);
           const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
           
           const link = document.createElement('a');
@@ -120,7 +106,6 @@
           link.className = 'download-btn';
           outputEl.appendChild(link);
           
-          // Let the UI breathe briefly between clips to prevent mobile browser crashes
           await new Promise(r => setTimeout(r, 100));
         }
 
@@ -136,4 +121,3 @@
   </script>
 </body>
 </html>
-
