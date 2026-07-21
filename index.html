@@ -14,14 +14,8 @@
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
     #status { white-space: pre-wrap; word-break: break-all; }
   </style>
-  <script type="importmap">
-    {
-      "imports": {
-        "@ffmpeg/ffmpeg": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js",
-        "@ffmpeg/util": "https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js"
-      }
-    }
-  </script>
+  <!-- Using Version 0.10.1 which predates the strict worker and SharedArrayBuffer browser restrictions -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
 </head>
 <body>
   <div class="container shadow-lg">
@@ -42,13 +36,17 @@
     <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from '@ffmpeg/ffmpeg';
-    import { fetchFile, toBlobURL } from '@ffmpeg/util';
+  <script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    
+    // Explicitly loading the 0.10.0 core which is guaranteed single-threaded 
+    const ffmpeg = createFFmpeg({ 
+      corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js',
+      log: true 
+    });
 
     const statusEl = document.getElementById('status');
     const outputEl = document.getElementById('output');
-    let ffmpeg = null;
 
     document.getElementById('process-btn').addEventListener('click', async () => {
       try {
@@ -78,22 +76,12 @@
         }
 
         statusEl.innerText = "Loading processing engine (this takes a moment)...";
-        if (!ffmpeg) {
-          ffmpeg = new FFmpeg();
-          
-          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-          const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm';
-          
-          // This specific code block bypasses the cross-origin worker and SharedArrayBuffer errors
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            workerURL: await toBlobURL(`${ffmpegURL}/worker.js`, 'text/javascript')
-          });
+        if (!ffmpeg.isLoaded()) {
+          await ffmpeg.load();
         }
 
         statusEl.innerText = "Reading video into memory...";
-        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+        ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
 
         for (let i = 0; i < count; i++) {
           statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
@@ -103,7 +91,7 @@
           const outputName = `clip_${i + 1}.mp4`;
           
           // These commands keep the video natively sliced and correctly rotated
-          await ffmpeg.exec([
+          await ffmpeg.run(
             '-i', 'input.mp4',
             '-ss', startTime.toString(),
             '-t', length.toString(),
@@ -112,9 +100,9 @@
             '-pix_fmt', 'yuv420p',
             '-metadata:s:v:0', 'rotate=0',
             outputName
-          ]);
+          );
 
-          const data = await ffmpeg.readFile(outputName);
+          const data = ffmpeg.FS('readFile', outputName);
           const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
           
           const link = document.createElement('a');
