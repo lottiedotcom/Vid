@@ -4,13 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Clipper</title>
-  <script src="https://cdn.tailwindcss.com" crossorigin="anonymous"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    /* Backup styling in case the security headers block Tailwind on mobile */
     body { background-color: #111827; color: white; padding: 1rem; font-family: sans-serif; }
     .container { background-color: #1f2937; padding: 1.5rem; border-radius: 0.75rem; max-width: 28rem; margin: 2rem auto; }
-    input, select, button { width: 100%; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 0.25rem; color: black; }
-    button { background-color: #2563eb; color: white; font-weight: bold; border: none; padding: 1rem; cursor: pointer; }
+    input, select, button { width: 100%; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 0.25rem; color: black; box-sizing: border-box; }
+    button { background-color: #2563eb; color: white; font-weight: bold; border: none; padding: 1rem; cursor: pointer; border-radius: 0.5rem; }
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.25rem; }
   </style>
 </head>
@@ -34,13 +33,12 @@
     <button id="process-btn">Process Video</button>
     
     <div id="status" style="margin-top: 1rem; text-align: center; color: #9ca3af; font-family: monospace;"></div>
-    <div id="output" style="margin-top: 1.5rem;"></div>
+    <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
   <script type="module">
-    // Using unpkg and toBlobURL to bypass strict COEP security headers
-    import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js';
-    import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
+    import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js';
+    import { fetchFile } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
 
     const ffmpeg = new FFmpeg();
     const statusEl = document.getElementById('status');
@@ -58,15 +56,13 @@
       outputEl.innerHTML = '';
 
       if (!ffmpeg.loaded) {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/esm';
         try {
-          // This specific loading method prevents the app from getting stuck
           await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+            coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js',
+            wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm'
           });
         } catch (e) {
-          statusEl.innerText = "Error loading engine. Refresh and try again.";
+          statusEl.innerText = `Error: ${e.message || 'Could not load engine.'}`;
           console.error(e);
           return;
         }
@@ -118,3 +114,4 @@
   </script>
 </body>
 </html>
+
