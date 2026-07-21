@@ -14,15 +14,6 @@
     .download-btn { background-color: #16a34a; display: block; text-align: center; text-decoration: none; padding: 0.75rem; margin-top: 0.5rem; color: white; font-weight: bold; border-radius: 0.5rem; }
     #status { white-space: pre-wrap; word-break: break-all; }
   </style>
-  <!-- Load the single-threaded FFmpeg ESM bundle that does not require SharedArrayBuffer -->
-  <script type="importmap">
-    {
-      "imports": {
-        "@ffmpeg/ffmpeg": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js",
-        "@ffmpeg/util": "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js"
-      }
-    }
-  </script>
 </head>
 <body>
   <div class="container shadow-lg">
@@ -34,12 +25,8 @@
     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">2. Number of Clips:</label>
     <input type="number" id="clip-count" value="5" min="1" max="20">
     
-    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">3. Clip Length:</label>
-    <select id="clip-length">
-      <option value="3">3 Seconds</option>
-      <option value="5">5 Seconds</option>
-      <option value="10">10 Seconds</option>
-    </select>
+    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">3. Clip Length (Seconds):</label>
+    <input type="number" id="clip-length" value="3" min="1" max="60">
     
     <button id="process-btn">Process Video</button>
     
@@ -47,13 +34,9 @@
     <div id="output" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 10px;"></div>
   </div>
 
-  <script type="module">
-    import { FFmpeg } from '@ffmpeg/ffmpeg';
-    import { fetchFile, toBlobURL } from '@ffmpeg/util';
-
+  <script>
     const statusEl = document.getElementById('status');
     const outputEl = document.getElementById('output');
-    let ffmpeg = null;
 
     document.getElementById('process-btn').addEventListener('click', async () => {
       try {
@@ -67,57 +50,42 @@
         const count = parseInt(document.getElementById('clip-count').value);
         const length = parseInt(document.getElementById('clip-length').value);
         
-        statusEl.innerText = "Checking video duration...";
+        statusEl.innerText = "Analyzing video...";
         outputEl.innerHTML = '';
 
+        const videoUrl = URL.createObjectURL(file);
         const videoElement = document.createElement('video');
-        videoElement.src = URL.createObjectURL(file);
+        videoElement.src = videoUrl;
+        videoElement.muted = true;
+        videoElement.playsInline = true;
+
         await new Promise((resolve, reject) => {
           videoElement.onloadedmetadata = resolve;
-          videoElement.onerror = () => reject(new Error("Failed to load video metadata. File might be corrupted or unsupported format."));
+          videoElement.onerror = () => reject(new Error("Failed to load video file."));
         });
-        
+
         const duration = videoElement.duration;
-        
         if (duration < length) {
           throw new Error(`Video is too short (${duration.toFixed(1)}s) for a ${length}s clip!`);
         }
 
-        statusEl.innerText = "Initializing single-threaded engine...";
-        if (!ffmpeg) {
-          ffmpeg = new FFmpeg();
-          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          });
+        if (!window.MediaRecorder) {
+          throw new Error("MediaRecorder is not supported in this mobile browser.");
         }
 
-        statusEl.innerText = "Reading video into memory...";
-        await ffmpeg.writeFile('input.mp4', await fetchFile(file));
-
         for (let i = 0; i < count; i++) {
-          statusEl.innerText = `Cutting clip ${i + 1} of ${count}...`;
+          statusEl.innerText = `Recording clip ${i + 1} of ${count}...`;
           
           const maxStartTime = duration - length;
           const startTime = Math.max(0, Math.random() * maxStartTime);
-          const outputName = `clip_${i + 1}.mp4`;
           
-          await ffmpeg.exec([
-            '-i', 'input.mp4',
-            '-ss', startTime.toString(),
-            '-t', length.toString(),
-            '-c', 'copy',
-            outputName
-          ]);
-
-          const data = await ffmpeg.readFile(outputName);
-          const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+          const clipBlob = await recordSegment(videoElement, startTime, length);
           
+          const url = URL.createObjectURL(clipBlob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = outputName;
-          link.innerText = `⬇️ Download Clip ${i + 1}`;
+          link.download = `clip_${i + 1}.webm`;
+          link.innerText = `⬇️ Download Clip ${i + 1} (${length}s)`;
           link.className = 'download-btn';
           outputEl.appendChild(link);
         }
@@ -131,6 +99,37 @@
         statusEl.innerText = "ERROR: " + err.message;
       }
     });
+
+    function recordSegment(video, startTime, duration) {
+      return new Promise((resolve, reject) => {
+        video.currentTime = startTime;
+        
+        video.onseeked = async () => {
+          try {
+            const stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+            const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+            const chunks = [];
+
+            recorder.ondataavailable = e => chunks.push(e.data);
+            recorder.onstop = () => {
+              const blob = new Blob(chunks, { type: 'video/webm' });
+              resolve(blob);
+            };
+
+            recorder.start();
+            video.play();
+
+            setTimeout(() => {
+              recorder.stop();
+              video.pause();
+            }, duration * 1000);
+
+          } catch (e) {
+            reject(e);
+          }
+        };
+      });
+    }
   </script>
 </body>
 </html>
